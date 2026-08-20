@@ -196,7 +196,7 @@
 <!-- ================= CONFIG ================= -->
 <div class="setup-wrap" id="setupWrap">
   <div class="setup">
-    <h1>Prof de maths, <mark>version poche</mark> <span class="vtag">v14</span></h1>
+    <h1>Prof de maths, <mark>version poche</mark> <span class="vtag">v15</span></h1>
     <p class="sub">Elle t'explique étape par étape et ne donne jamais la réponse toute faite.</p>
 
     <div class="field">
@@ -237,7 +237,7 @@
         </span>
       </div>
       <div class="row" style="margin-top:12px">
-        <label style="margin:0" for="handsToggle">🎙️ Mode mains libres (l'élève parle, Sophie répond)</label>
+        <label style="margin:0" for="handsToggle">🎙️ Mode mains libres (l'élève parle, Nora répond)</label>
         <span class="switch">
           <input type="checkbox" id="handsToggle">
           <span class="slider"></span>
@@ -246,8 +246,8 @@
       <div class="voice-row">
         <button class="test" id="micTest" type="button" style="flex:1">🎙️ Tester le micro</button>
       </div>
-      <p class="hint" id="micNote" style="font-size:12px;color:var(--gris);margin-top:6px">Sophie parle, puis le micro s'ouvre tout seul. Fonctionne sur Chrome (ordinateur et Android). Le micro doit être autorisé.</p>
-      <p class="voice-note" id="voiceNote">La voix du navigateur n'est pas disponible ici — mais si tu colles une clé Google ci-dessous, Sophie parlera quand même (voix Gemini).</p>
+      <p class="hint" id="micNote" style="font-size:12px;color:var(--gris);margin-top:6px">Nora parle, puis le micro s'ouvre tout seul. Fonctionne sur Chrome (ordinateur et Android). Le micro doit être autorisé.</p>
+      <p class="voice-note" id="voiceNote">La voix du navigateur n'est pas disponible ici — mais si tu colles une clé Google ci-dessous, Nora parlera quand même (voix Gemini).</p>
       <div class="voice-row">
         <select id="voiceMode" aria-label="Source de la voix">
           <option value="auto">Voix Google, secours navigateur (par défaut)</option>
@@ -256,11 +256,11 @@
         </select>
       </div>
       <div class="voice-row" id="gvoiceRow">
-        <select id="gvoiceSelect" aria-label="Voix de Sophie (Google)">
-          <option value="Kore">Sophie — Kore (posée, claire)</option>
-          <option value="Aoede">Sophie — Aoede (douce)</option>
-          <option value="Leda">Sophie — Leda (jeune, dynamique)</option>
-          <option value="Zephyr">Sophie — Zephyr (lumineuse)</option>
+        <select id="gvoiceSelect" aria-label="Voix de Nora (Google)">
+          <option value="Kore">Nora — Kore (posée, claire)</option>
+          <option value="Aoede">Nora — Aoede (douce)</option>
+          <option value="Leda">Nora — Leda (jeune, dynamique)</option>
+          <option value="Zephyr">Nora — Zephyr (lumineuse)</option>
         </select>
         <button class="test" id="gvoiceTest" type="button">Écouter</button>
       </div>
@@ -300,9 +300,9 @@
 <!-- ================= CHAT ================= -->
 <div class="app" id="app">
   <header>
-    <div class="avatar">S</div>
+    <div class="avatar">N</div>
     <div class="head-info">
-      <div class="name">Sophie <span class="vtag">v14</span></div>
+      <div class="name">Nora <span class="vtag">v15</span></div>
       <div class="etape" id="etapeTxt">Démarrage de la séance…</div>
       <div class="etape" id="voiceSrc" style="opacity:.7"></div>
     </div>
@@ -363,7 +363,7 @@ const S = {
 
 /* ================= PROMPT SYSTÈME (v2) ================= */
 function systemPrompt(){
-return `Tu es Sophie, professeure particulière de mathématiques pour le collège français (6e à 3e). Tu parles comme une vraie prof jeune et sympa : phrases courtes, mots simples, zéro jargon inutile. Tu tutoies l'élève, qui s'appelle ${S.prenom||'l\u2019élève'}. Tu es encourageante mais honnête — tu ne dis jamais "bravo" pour une réponse fausse.
+return `Tu es Nora, professeure particulière de mathématiques pour le collège français (6e à 3e). Tu parles comme une vraie prof jeune et sympa : phrases courtes, mots simples, zéro jargon inutile. Tu tutoies l'élève, qui s'appelle ${S.prenom||'l\u2019élève'}. Tu es encourageante mais honnête — tu ne dis jamais "bravo" pour une réponse fausse.
 
 RÈGLE ABSOLUE : tu ne donnes JAMAIS la réponse finale d'un exercice, même si l'élève la demande ou insiste. À la place, tu poses la question guidée suivante. Si l'élève est vraiment bloqué après 3 tentatives, tu fais l'étape AVEC lui en expliquant chaque geste, puis tu lui donnes un exercice quasi identique à faire seul.
 
@@ -678,6 +678,32 @@ function stopSpeak(){
 /* ================= MICRO (reconnaissance vocale) ================= */
 var rec = null;
 
+/* --- Filtre anti-écho ---
+   Même en coupant le micro pendant que Nora parle, le haut-parleur peut
+   déborder sur la fin. On compare donc ce qui est reconnu avec ce que Nora
+   vient de dire : si ça se recouvre trop, c'est son écho, pas l'élève. */
+function normWords(t){
+  return String(t||'').toLowerCase()
+    .replace(/[.,;:!?…«»"'()\-]/g,' ')
+    .split(/\s+/).filter(function(w){ return w.length > 2; });
+}
+function echoScore(heard, said){
+  var h = normWords(heard), s = normWords(said);
+  if(!h.length || !s.length) return 0;
+  var set = {};
+  s.forEach(function(w){ set[w] = true; });
+  var hit = 0;
+  h.forEach(function(w){ if(set[w]) hit++; });
+  return hit / h.length;
+}
+function isEcho(heard){
+  if(!S.lastSpoken) return false;
+  var words = normWords(heard);
+  /* Une réponse d'élève est courte ; l'écho reprend les mots de Nora. */
+  if(echoScore(heard, S.lastSpoken) >= 0.6 && words.length >= 3) return true;
+  return false;
+}
+
 function micSupported(){ return !!RECOG; }
 
 function setListening(on){
@@ -703,6 +729,7 @@ function initRecog(){
   rec.onstart = function(){
     S.micDenied = false;
     S.micErrors = 0;
+    S.startRetries = 0;
     setListening(true);
     clearNotify();
   };
@@ -751,6 +778,13 @@ function initRecog(){
     setListening(false);
     var txt = S.lastFinal;
     S.lastFinal = '';
+    if(txt && isEcho(txt)){
+      /* C'était la voix de Nora renvoyée par le haut-parleur : on ignore
+         et on rouvre le micro pour l'élève. */
+      try{ document.getElementById('input').value = ''; }catch(e){}
+      if(S.hands && !S.busy) setTimeout(startListening, 300);
+      return;
+    }
     if(txt && !S.busy){
       try{ document.getElementById('input').value = ''; }catch(e){}
       turn(txt);
@@ -792,7 +826,9 @@ function requestMic(){
   var env = micEnvironment();
   if(env.reason) return Promise.reject(new Error(env.reason));
   try{
-    return navigator.mediaDevices.getUserMedia({ audio:true }).then(function(stream){
+    return navigator.mediaDevices.getUserMedia({
+      audio: { echoCancellation:true, noiseSuppression:true, autoGainControl:true }
+    }).then(function(stream){
       /* on relâche aussitôt : seule l'autorisation nous intéresse */
       try{ stream.getTracks().forEach(function(t){ t.stop(); }); }catch(e){}
       S.micReady = true;
@@ -830,7 +866,7 @@ function showMicError(msg){
 }
 
 /* Vrai état de la parole : on interroge les moteurs audio au lieu de se fier
-   à un minuteur. Corrige l'ouverture du micro pendant que Sophie parle. */
+   à un minuteur. Corrige l'ouverture du micro pendant que Nora parle. */
 function voiceBusy(){
   try{ if(SYNTH && (SYNTH.speaking || SYNTH.pending)) return true; }catch(e){}
   try{ if(elAudio && !elAudio.paused && !elAudio.ended) return true; }catch(e){}
@@ -840,7 +876,7 @@ function voiceBusy(){
 function startListening(){
   if(!RECOG || S.listening || S.busy || S.micDenied) return;
   if(S.speaking || voiceBusy()){
-    /* Sophie parle encore : on repasse dans 250 ms au lieu d'écouter l'écho */
+    /* Nora parle encore : on repasse dans 250 ms au lieu d'écouter l'écho */
     clearTimeout(S.waitVoice);
     S.waitVoice = setTimeout(startListening, 250);
     return;
@@ -864,8 +900,19 @@ function startListening(){
     rec.start();
     setListening(true);
   }catch(e){
-    /* start() sur une session déjà active lève une exception : on ignore */
+    /* start() sur une session pas encore refermée lève InvalidStateError.
+       C'est LA raison pour laquelle il fallait appuyer plusieurs fois :
+       on referme proprement puis on relance automatiquement. */
     setListening(false);
+    try{ rec.abort(); }catch(e2){}
+    S.startRetries = (S.startRetries || 0) + 1;
+    if(S.startRetries <= 4){
+      clearTimeout(S.retryStart);
+      S.retryStart = setTimeout(startListening, 250);
+    } else {
+      S.startRetries = 0;
+      showMicError('Le micro ne veut pas démarrer. Recharge la page et réessaie.');
+    }
   }
 }
 function stopListening(){
@@ -874,14 +921,16 @@ function stopListening(){
   setListening(false);
 }
 
-/* Le micro ne doit jamais écouter pendant que Sophie parle (écho) */
+/* Le micro ne doit jamais écouter pendant que Nora parle (écho) */
 function speakThenListen(txt){
   stopListening();
+  S.lastSpoken = txt;
   S.speaking = true;
   S.onSpeechEnd = function(){
     S.speaking = false;
     S.onSpeechEnd = null;
-    if(S.hands && !S.busy) setTimeout(startListening, 120);
+    /* 400 ms de marge : le haut-parleur finit de vider son tampon */
+    if(S.hands && !S.busy) setTimeout(startListening, 400);
   };
   speak(txt);
   /* filet de sécurité : si aucun signal de fin n'arrive, on relance quand même */
@@ -989,7 +1038,7 @@ function refreshKeyStat(){
   if(!c){ el.className = 'keystat'; el.textContent = 'Aucune clé saisie.'; return; }
   if(f === 'google' || (f === 'auto' && d === 'google')){
     el.className = 'keystat ok';
-    el.textContent = '✓ Clé Google reconnue (' + c.length + ' caractères) — Sophie parlera avec la voix Google.';
+    el.textContent = '✓ Clé Google reconnue (' + c.length + ' caractères) — Nora parlera avec la voix Google.';
   } else if(f === 'anthropic' || (f === 'auto' && d === 'anthropic')){
     el.className = 'keystat ok';
     el.textContent = '✓ Clé Anthropic reconnue (' + c.length + ' caractères).';
@@ -1254,7 +1303,7 @@ bindChips('classeChips', v=>S.classe=v);
     }
     S.apiKey = k; S.gvoice = sel ? sel.value : 'Kore';
     g.textContent = '…';
-    speakGemini("Salut, moi c'est Sophie. On va faire des maths ensemble, étape par étape.")
+    speakGemini("Salut, moi c'est Nora. On va faire des maths ensemble, étape par étape.")
       .then(function(){ g.textContent = 'Écouter'; })
       .catch(function(err){ g.textContent = 'Écouter'; alert('Voix Google indisponible : ' + err.message); });
   };
@@ -1264,7 +1313,7 @@ bindChips('classeChips', v=>S.classe=v);
   if(t) t.onclick = function(){
     unlockAll();
     var on = S.son; S.son = true;
-    speakBrowser("Salut, moi c'est Sophie ! On va faire des maths ensemble.", true);
+    speakBrowser("Salut, moi c'est Nora ! On va faire des maths ensemble.", true);
     S.son = on;
   };
 })();
@@ -1309,11 +1358,15 @@ $('micBtn').onclick = ()=>{
   var envMsg = micBlockedReason();
   if(envMsg){ showMicError(envMsg); return; }
   if(S.listening){ stopListening(); return; }
-  /* Appui volontaire : on repart de zéro, y compris après une fausse alerte */
-  S.micDenied = false; S.micErrors = 0;
+  /* Appui volontaire : Nora se tait immédiatement et le micro passe devant */
+  S.micDenied = false; S.micErrors = 0; S.startRetries = 0;
   clearNotify();
-  stopSpeak(); S.speaking = false;
+  stopSpeak();
+  S.speaking = false;
+  S.lastSpoken = '';           /* pas de filtre écho sur une prise de parole voulue */
   clearTimeout(S.waitVoice);
+  clearTimeout(S.speakTimer);
+  try{ document.getElementById('micBtn').classList.add('on'); }catch(e){}
   startListening();
 };
 
