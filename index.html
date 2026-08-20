@@ -199,7 +199,7 @@
 <!-- ================= CONFIG ================= -->
 <div class="setup-wrap" id="setupWrap">
   <div class="setup">
-    <h1>Prof de maths, <mark>version poche</mark> <span class="vtag">v15</span></h1>
+    <h1>Prof de maths, <mark>version poche</mark> <span class="vtag">v16</span></h1>
     <p class="sub">Elle t'explique étape par étape et ne donne jamais la réponse toute faite.</p>
 
     <div class="field">
@@ -305,7 +305,7 @@
   <header>
     <div class="avatar">N</div>
     <div class="head-info">
-      <div class="name">Nora <span class="vtag">v15</span></div>
+      <div class="name">Nora <span class="vtag">v16</span></div>
       <div class="etape" id="etapeTxt">Démarrage de la séance…</div>
       <div class="etape" id="voiceSrc" style="opacity:.7"></div>
     </div>
@@ -563,7 +563,12 @@ function pcmToWav(pcm, rate){
 }
 function speakGemini(txt, idx, tryNo){
   idx = idx || 0; tryNo = tryNo || 0;
-  if(idx >= TTS_MODELS.length) return Promise.reject(new Error('TTS indisponible'));
+  if(!TTS_MODELS.length){
+    return Promise.reject(new Error('ta clé Google ne donne accès à aucun modèle de voix'));
+  }
+  if(idx >= TTS_MODELS.length){
+    return Promise.reject(new Error('aucun modèle de voix Google n\'a répondu'));
+  }
   var voice = S.gvoice || 'Kore';
   return fetch('https://generativelanguage.googleapis.com/v1beta/models/' + TTS_MODELS[idx] + ':generateContent', {
     method:'POST',
@@ -647,10 +652,18 @@ function googleVoiceUsable(){
   return true;
 }
 function fallbackBrowser(txt, fromGesture, why){
+  var raison = (why && why.message) ? why.message : '';
   if(S.voiceMode === 'google'){
-    setVoiceSrc('Google indisponible');
-    showSoundHelp();
+    /* Même en mode « Google seule », mieux vaut la voix du navigateur
+       qu'un silence : on prévient et on parle quand même. */
+    if(raison) showMicError('Voix Google indisponible — ' + raison + ' · voix du navigateur utilisée.');
+    setVoiceSrc('navigateur (Google KO)');
+    speakBrowser(txt, fromGesture);
     return;
+  }
+  if(raison && !S.voiceWarned){
+    S.voiceWarned = true;
+    showMicError('Voix Google indisponible — ' + raison + ' · Nora continue avec la voix du navigateur.');
   }
   setVoiceSrc('navigateur' + (why ? ' (secours)' : ''));
   speakBrowser(txt, fromGesture);
@@ -1077,6 +1090,9 @@ function adoptModels(found){
     var pref = found.text.filter(function(n){ return n.indexOf('flash') !== -1; });
     GEMINI_MODELS = (pref.length ? pref : found.text).slice(0, 4);
   }
+  /* On ne remplace que si le compte expose vraiment des modèles de voix.
+     Une liste vide ou illisible ne doit pas supprimer la voix : on garde
+     les modèles par défaut et on laisse l'appel décider. */
   if(found.tts && found.tts.length){ TTS_MODELS = found.tts.slice(0, 3); }
 }
 
@@ -1345,6 +1361,19 @@ $('goBtn').onclick = ()=>{
   $('sonBtn').classList.toggle('off', !S.son);
   /* Débloque son + audio PENDANT le clic (obligatoire sur iOS/Chrome) */
   if(S.son){ unlockAll(); }
+  /* Au démarrage, on demande à Google quels modèles la clé peut réellement
+     utiliser : évite d'appeler des noms de modèles qui n'existent plus. */
+  if(providerFor(S.apiKey) === 'google'){
+    checkGoogleKey(S.apiKey).then(function(found){
+      adoptModels(found);
+      if(found.text.length && !found.tts.length && S.voiceMode !== 'browser'){
+        showMicError('Ta clé Google n\u2019a pas accès à la voix Gemini (modèle TTS absent du compte). Nora parlera avec la voix du navigateur.');
+        setVoiceSrc('navigateur');
+      }
+    }).catch(function(err){
+      showMicError('Clé Google : ' + err.message);
+    });
+  }
   S.history.push({role:'user', content:'[Début de la session — présente-toi et pose ta première question de diagnostic]'});
   turn(null);
 };
