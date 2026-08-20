@@ -199,7 +199,7 @@
 <!-- ================= CONFIG ================= -->
 <div class="setup-wrap" id="setupWrap">
   <div class="setup">
-    <h1>Prof de maths, <mark>version poche</mark> <span class="vtag">v16</span></h1>
+    <h1>Prof de maths, <mark>version poche</mark> <span class="vtag">v17</span></h1>
     <p class="sub">Elle t'explique étape par étape et ne donne jamais la réponse toute faite.</p>
 
     <div class="field">
@@ -305,7 +305,7 @@
   <header>
     <div class="avatar">N</div>
     <div class="head-info">
-      <div class="name">Nora <span class="vtag">v16</span></div>
+      <div class="name">Nora <span class="vtag">v17</span></div>
       <div class="etape" id="etapeTxt">Démarrage de la séance…</div>
       <div class="etape" id="voiceSrc" style="opacity:.7"></div>
     </div>
@@ -476,16 +476,75 @@ function startKeepAlive(){
     }, 9000);
   }catch(e){}
 }
-/* Débloque aussi la lecture audio (ElevenLabs) via un son muet joué au clic */
-function unlockAudio(){
-  if(S.audioUnlocked || typeof Audio === 'undefined') return;
+/* --- LECTURE AUDIO VIA WEB AUDIO ---
+   Un <audio>.play() déclenché après un appel réseau est refusé par le
+   navigateur ("play() can only be initiated by a user gesture").
+   Un AudioContext, lui, reste utilisable une fois débloqué par un clic :
+   c'est la seule méthode fiable pour jouer la voix générée à distance. */
+var actx = null, actxSource = null;
+
+function getCtx(){
+  if(actx) return actx;
   try{
-    var a = new Audio('data:audio/mp3;base64,//uQZAAAAAAAAAAAAAAAAAAAAAAAWGluZwAAAA8AAAACAAACcQCA');
-    a.volume = 0;
-    var p = a.play();
-    if(p && p.catch) p.catch(function(){});
+    var C = window.AudioContext || window.webkitAudioContext;
+    if(!C) return null;
+    actx = new C();
+  }catch(e){ actx = null; }
+  return actx;
+}
+function unlockAudio(){
+  var c = getCtx();
+  if(!c) return;
+  try{
+    if(c.state === 'suspended' && c.resume) c.resume();
+    /* un échantillon muet suffit à marquer le contexte comme autorisé */
+    var b = c.createBuffer(1, 1, 22050);
+    var s = c.createBufferSource();
+    s.buffer = b; s.connect(c.destination); s.start(0);
     S.audioUnlocked = true;
   }catch(e){}
+}
+
+/* Joue du PCM 16 bits signé (format renvoyé par la voix Google) */
+function playPCM(bytes, rate, onEnd){
+  var c = getCtx();
+  if(!c) return Promise.reject(new Error('audio non disponible'));
+  if(c.state === 'suspended' && c.resume){ try{ c.resume(); }catch(e){} }
+  var n = Math.floor(bytes.length / 2);
+  var buf = c.createBuffer(1, n, rate || 24000);
+  var ch = buf.getChannelData(0);
+  var dv = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+  for(var i = 0; i < n; i++){ ch[i] = dv.getInt16(i * 2, true) / 32768; }
+  stopAudioSource();
+  actxSource = c.createBufferSource();
+  actxSource.buffer = buf;
+  actxSource.connect(c.destination);
+  actxSource.onended = function(){ actxSource = null; if(onEnd) onEnd(); };
+  actxSource.start(0);
+  return Promise.resolve();
+}
+/* Joue un fichier compressé (mp3 ElevenLabs) sans passer par <audio> */
+function playEncoded(arrbuf, onEnd){
+  var c = getCtx();
+  if(!c) return Promise.reject(new Error('audio non disponible'));
+  if(c.state === 'suspended' && c.resume){ try{ c.resume(); }catch(e){} }
+  return new Promise(function(res, rej){
+    c.decodeAudioData(arrbuf, function(buf){
+      stopAudioSource();
+      actxSource = c.createBufferSource();
+      actxSource.buffer = buf;
+      actxSource.connect(c.destination);
+      actxSource.onended = function(){ actxSource = null; if(onEnd) onEnd(); };
+      actxSource.start(0);
+      res();
+    }, function(){ rej(new Error('audio illisible')); });
+  });
+}
+function stopAudioSource(){
+  if(actxSource){
+    try{ actxSource.onended = null; actxSource.stop(0); }catch(e){}
+    actxSource = null;
+  }
 }
 function unlockAll(){ unlockVoice(); unlockAudio(); }
 
@@ -609,16 +668,12 @@ function speakGemini(txt, idx, tryNo){
       for(var i=0;i<parts.length;i++){ if(parts[i].inlineData){ inline = parts[i].inlineData; break; } }
       if(!inline || !inline.data) throw new Error('pas d\'audio renvoyé');
       var pcm = b64ToBytes(inline.data);
-      var blob = (inline.mimeType && inline.mimeType.indexOf('wav') !== -1)
-        ? new Blob([pcm], { type:'audio/wav' })
-        : pcmToWav(pcm, rateFromMime(inline.mimeType));
-      if(elAudio){ try{ elAudio.pause(); }catch(e){} }
-      elAudio = new Audio(URL.createObjectURL(blob));
-      elAudio.onended = function(){ if(S.onSpeechEnd) S.onSpeechEnd(); };
       setVoiceSrc('Google · ' + (S.gvoice || 'Kore'));
-      var p = elAudio.play();
-      if(p && p.then) return p;
-      return null;
+      /* Lecture par Web Audio : pas de blocage « user gesture » */
+      if(inline.mimeType && inline.mimeType.indexOf('wav') !== -1){
+        return playEncoded(pcm.buffer, function(){ if(S.onSpeechEnd) S.onSpeechEnd(); });
+      }
+      return playPCM(pcm, rateFromMime(inline.mimeType), function(){ if(S.onSpeechEnd) S.onSpeechEnd(); });
     });
   });
 }
@@ -688,6 +743,7 @@ function speak(txt, fromGesture){
 }
 function stopSpeak(){
   if(SYNTH){ try{ SYNTH.cancel(); }catch(e){} }
+  stopAudioSource();
   if(elAudio){ try{ elAudio.pause(); }catch(e){} }
 }
 
@@ -885,6 +941,7 @@ function showMicError(msg){
    à un minuteur. Corrige l'ouverture du micro pendant que Nora parle. */
 function voiceBusy(){
   try{ if(SYNTH && (SYNTH.speaking || SYNTH.pending)) return true; }catch(e){}
+  try{ if(actxSource) return true; }catch(e){}
   try{ if(elAudio && !elAudio.paused && !elAudio.ended) return true; }catch(e){}
   return false;
 }
@@ -1321,6 +1378,7 @@ bindChips('classeChips', v=>S.classe=v);
       return;
     }
     S.apiKey = k; S.gvoice = sel ? sel.value : 'Kore';
+    unlockAudio();                 /* dans le geste : autorise la lecture différée */
     g.textContent = '…';
     speakGemini("Salut, moi c'est Nora. On va faire des maths ensemble, étape par étape.")
       .then(function(){ g.textContent = 'Écouter'; })
